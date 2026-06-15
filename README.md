@@ -83,6 +83,9 @@ python inference.py
 - Classes: **46 total** (26 letters + 10 numbers + 10 words)
 - Training samples: **18,400+**
 
+## ER Diagram
+[View ER Diagram](ER_Diagram_ISL.pdf)
+
 ## 👤 Author
 **Prabha** — [@prabha092007](https://github.com/prabha092007)
 
