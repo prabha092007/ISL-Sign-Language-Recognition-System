@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ISL Sign Language Recognition</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0D1B2A; color:#fff; font-family:'Segoe UI',Arial,sans-serif; min-height:100vh; }
+header {
+  background:linear-gradient(135deg,#1A237E,#00897B);
+  padding:18px 24px; display:flex; align-items:center; gap:14px;
+}
+header h1 { font-size:1.4em; font-weight:800; }
+header span { font-size:1.8em; }
+.subtitle { font-size:0.8em; color:#B2EBF2; margin-top:2px; }
+.main { display:flex; gap:20px; padding:20px; flex-wrap:wrap; justify-content:center; }
+.video-box {
+  position:relative; border-radius:16px; overflow:hidden;
+  border:2px solid #00897B; box-shadow:0 0 30px rgba(0,137,123,0.3); flex-shrink:0;
+}
+#videoEl { display:block; width:540px; max-width:100%; transform:scaleX(-1); }
+#canvasEl { position:absolute; top:0; left:0; width:100%; height:100%; transform:scaleX(-1); }
+.status-bar {
+  position:absolute; bottom:0; left:0; right:0;
+  background:rgba(0,0,0,0.6); padding:8px 14px;
+  display:flex; align-items:center; gap:8px; font-size:0.85em;
+}
+.dot { width:10px; height:10px; border-radius:50%; background:#f44336; flex-shrink:0; }
+.dot.on { background:#00e676; animation:pulse 1.5s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.panel { flex:1; min-width:280px; max-width:360px; display:flex; flex-direction:column; gap:14px; }
+.pred-card {
+  background:#1A2535; border-radius:14px; padding:20px;
+  border:1px solid rgba(255,255,255,0.08); text-align:center;
+}
+.pred-sign {
+  font-size:5em; font-weight:900; color:#00E5CC;
+  min-height:90px; display:flex; align-items:center; justify-content:center;
+}
+.pred-label { font-size:0.8em; color:#607D8B; margin-bottom:6px; }
+.conf-bar-wrap { background:#0D1B2A; border-radius:20px; height:10px; margin-top:10px; overflow:hidden; }
+.conf-bar { height:100%; border-radius:20px; background:linear-gradient(90deg,#00897B,#00E5CC); transition:width 0.3s; width:0%; }
+.conf-text { font-size:0.82em; color:#78909C; margin-top:6px; }
+.word-card {
+  background:#1A2535; border-radius:14px; padding:16px 18px;
+  border:1px solid rgba(255,255,255,0.08);
+}
+.word-card h3 { font-size:0.78em; color:#607D8B; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+.word-display { font-size:1.5em; font-weight:700; color:#FFD600; min-height:38px; word-break:break-all; letter-spacing:2px; }
+.sentence-display { font-size:0.95em; color:#80CBC4; min-height:28px; margin-top:4px; line-height:1.5; }
+.controls { display:flex; gap:8px; flex-wrap:wrap; }
+.btn { flex:1; padding:10px 8px; border:none; border-radius:10px; font-size:0.82em; font-weight:700; cursor:pointer; transition:all 0.2s; min-width:70px; }
+.btn:hover { transform:translateY(-2px); }
+.btn-clear { background:#37474F; color:#CFD8DC; }
+.btn-enter { background:#1A237E; color:#fff; }
+.btn-back  { background:#4A148C; color:#fff; }
+.btn-word  { background:#00695C; color:#fff; }
+.history { background:#1A2535; border-radius:14px; padding:14px 16px; border:1px solid rgba(255,255,255,0.08); max-height:140px; overflow-y:auto; }
+.history h3 { font-size:0.78em; color:#607D8B; margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+.history-item { font-size:0.88em; color:#90A4AE; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.04); }
+.tips { background:#1A2535; border-radius:14px; padding:14px 16px; border:1px solid rgba(255,255,255,0.08); font-size:0.82em; color:#78909C; line-height:1.7; }
+.tips strong { color:#80CBC4; }
+.loading-overlay {
+  position:fixed; inset:0; background:rgba(13,27,42,0.95);
+  display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:100; gap:16px;
+}
+.spinner { width:50px; height:50px; border:4px solid #1A2535; border-top:4px solid #00897B; border-radius:50%; animation:spin 0.9s linear infinite; }
+@keyframes spin { to{transform:rotate(360deg)} }
+.loading-text { color:#80CBC4; font-size:1em; }
+</style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Loading hand detection model...</div>
+</div>
+
+<header>
+  <span>🤟</span>
+  <div>
+    <h1>ISL Sign Language Recognition</h1>
+    <div class="subtitle">Real-time Indian Sign Language • A-Z • 0-9 • 10 Words</div>
+  </div>
+</header>
+
+<div class="main">
+  <div class="video-box">
+    <video id="videoEl" autoplay playsinline></video>
+    <canvas id="canvasEl"></canvas>
+    <div class="status-bar">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">Starting camera...</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="pred-card">
+      <div class="pred-label">DETECTED SIGN</div>
+      <div class="pred-sign" id="predSign">—</div>
+      <div class="conf-bar-wrap"><div class="conf-bar" id="confBar"></div></div>
+      <div class="conf-text" id="confText">Waiting for hand...</div>
+    </div>
+
+    <div class="word-card">
+      <h3>Current Word</h3>
+      <div class="word-display" id="wordDisplay">_</div>
+      <h3 style="margin-top:10px;">Sentence</h3>
+      <div class="sentence-display" id="sentenceDisplay">—</div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-clear" onclick="clearWord()">🗑 Clear</button>
+      <button class="btn btn-back"  onclick="backspace()">⌫ Back</button>
+      <button class="btn btn-enter" onclick="confirmWord()">✔ Confirm</button>
+      <button class="btn btn-word"  onclick="addWord()">+ Word</button>
+    </div>
+
+    <div class="history">
+      <h3>Sentence History</h3>
+      <div id="historyList"><div class="history-item" style="color:#37474F">No words yet</div></div>
+    </div>
+
+    <div class="tips">
+      <strong>Tips:</strong><br/>
+      • Hold sign steady for 1.5s to auto-add letters<br/>
+      • Good lighting improves accuracy<br/>
+      • Keep hand within camera frame<br/>
+      • <strong>+ Word</strong> adds detected word (hello, thanks...)<br/>
+      • <strong>Confirm</strong> saves current letters as a word
+    </div>
+  </div>
+</div>
+
+<script>
+const CONF_THRESHOLD = 0.75;
+const BUFFER_SIZE = 20;
+const ADD_DELAY = 1500;
+
+let predBuffer = [];
+let currentWord = '';
+let sentence = [];
+let lastAddTime = 0;
+let handsReady = false;
+
+const videoEl = document.getElementById('videoEl');
+const canvasEl = document.getElementById('canvasEl');
+const ctx = canvasEl.getContext('2d');
+const predSign = document.getElementById('predSign');
+const confBar = document.getElementById('confBar');
+const confText = document.getElementById('confText');
+const wordDisplay = document.getElementById('wordDisplay');
+const sentenceDisplay = document.getElementById('sentenceDisplay');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+
+function extractLandmarks(multiHandLandmarks) {
+  let hand1 = new Array(63).fill(0);
+  let hand2 = new Array(63).fill(0);
+  if (multiHandLandmarks.length > 0) {
+    const lm0 = multiHandLandmarks[0], w0 = lm0[0];
+    hand1 = lm0.flatMap(lm => [lm.x-w0.x, lm.y-w0.y, lm.z-w0.z]);
+  }
+  if (multiHandLandmarks.length > 1) {
+    const lm1 = multiHandLandmarks[1], w1 = lm1[0];
+    hand2 = lm1.flatMap(lm => [lm.x-w1.x, lm.y-w1.y, lm.z-w1.z]);
+  }
+  return [...hand1, ...hand2];
+}
+
+function detectSign(h) {
+  const tip  = i => ({ x:h[i*3],   y:h[i*3+1], z:h[i*3+2] });
+  const thumbTip=tip(4), indexTip=tip(8), middleTip=tip(12), ringTip=tip(16), pinkyTip=tip(20);
+  const indexBase=tip(5), middleBase=tip(9), ringBase=tip(13), pinkyBase=tip(17), thumbBase=tip(2);
+
+  const indexUp  = indexTip.y  < indexBase.y  - 0.05;
+  const middleUp = middleTip.y < middleBase.y - 0.05;
+  const ringUp   = ringTip.y   < ringBase.y   - 0.05;
+  const pinkyUp  = pinkyTip.y  < pinkyBase.y  - 0.05;
+  const thumbOut = Math.abs(thumbTip.x - thumbBase.x) > 0.08;
+
+  const dist = (a,b) => Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
+
+  if  (indexUp && middleUp && ringUp && pinkyUp && !thumbOut) return ['B', 0.82];
+  if  (indexUp && middleUp && ringUp && pinkyUp &&  thumbOut) return ['5', 0.80];
+  if  (indexUp && !middleUp && !ringUp && !pinkyUp && thumbOut) return ['D', 0.78];
+  if  (indexUp && !middleUp && !ringUp && !pinkyUp && !thumbOut) return ['1', 0.78];
+  if  (indexUp && middleUp && !ringUp && !pinkyUp) return ['2', 0.78];
+  if  (indexUp && middleUp && ringUp && !pinkyUp) return ['3', 0.76];
+  if  (!indexUp && !middleUp && ringUp && pinkyUp) return ['4', 0.75];
+  if  (indexUp && !middleUp && !ringUp && pinkyUp) return ['Y', 0.75];
+  if  (!indexUp && !middleUp && !ringUp && pinkyUp && !thumbOut) return ['I', 0.76];
+  if  (!indexUp && !middleUp && !ringUp && !pinkyUp && thumbOut) return ['A', 0.77];
+  if  (!indexUp && !middleUp && !ringUp && !pinkyUp && !thumbOut) return ['S', 0.75];
+  if  (!indexUp && !middleUp && !ringUp && pinkyUp && thumbOut) return ['Y', 0.77];
+  if  (dist(indexTip, thumbTip) < 0.05 && middleUp && ringUp && pinkyUp) return ['O', 0.76];
+  if  (dist(indexTip, thumbTip) < 0.05 && !middleUp && !ringUp && !pinkyUp) return ['0', 0.76];
+
+  return [null, 0];
+}
+
+function getStable() {
+  if (predBuffer.length < 5) return [null, 0];
+  const counts = {};
+  for (const [s] of predBuffer) if (s) counts[s] = (counts[s]||0)+1;
+  if (!Object.keys(counts).length) return [null, 0];
+  const best = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  return [best[0], best[1]/predBuffer.length];
+}
+
+function updateUI(sign, conf) {
+  if (sign && conf >= CONF_THRESHOLD) {
+    predSign.textContent = sign;
+    confBar.style.width = (conf*100)+'%';
+    confText.textContent = (conf*100).toFixed(0)+'% confidence';
+    predSign.style.color = '#00E5CC';
+    const now = Date.now();
+    if (sign.length === 1 && now - lastAddTime > ADD_DELAY) {
+      currentWord += sign;
+      lastAddTime = now;
+      updateWordUI();
+    }
+  } else {
+    predSign.textContent = '—';
+    predSign.style.color = '#37474F';
+    confBar.style.width = '0%';
+    confText.textContent = 'No sign detected';
+  }
+}
+
+function updateWordUI() {
+  wordDisplay.textContent = currentWord ? currentWord+'_' : '_';
+  sentenceDisplay.textContent = sentence.length ? sentence.join(' ') : '—';
+}
+
+function clearWord()   { currentWord=''; updateWordUI(); }
+function backspace()   { currentWord=currentWord.slice(0,-1); updateWordUI(); }
+function confirmWord() {
+  if (currentWord) { sentence.push(currentWord); addHistory(currentWord); currentWord=''; updateWordUI(); }
+}
+function addWord() {
+  const s = predSign.textContent;
+  if (s && s!=='—' && s.length>1) { sentence.push(s); addHistory(s); updateWordUI(); lastAddTime=Date.now(); }
+}
+function addHistory(w) {
+  const list = document.getElementById('historyList');
+  if (list.children[0]?.style.color==='rgb(55, 71, 79)') list.innerHTML='';
+  const d = document.createElement('div');
+  d.className='history-item'; d.textContent='→ '+w; list.prepend(d);
+}
+
+const hands = new Hands({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+hands.setOptions({ maxNumHands:2, modelComplexity:1, minDetectionConfidence:0.7, minTrackingConfidence:0.6 });
+
+hands.onResults(results => {
+  canvasEl.width  = videoEl.videoWidth  || 540;
+  canvasEl.height = videoEl.videoHeight || 405;
+  ctx.save();
+  ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
+
+  if (results.multiHandLandmarks?.length > 0) {
+    statusDot.classList.add('on');
+    statusText.textContent = results.multiHandLandmarks.length===2 ? '2 hands detected' : '1 hand detected';
+    for (const lm of results.multiHandLandmarks) {
+      drawConnectors(ctx, lm, HAND_CONNECTIONS, {color:'#00E5CC', lineWidth:2});
+      drawLandmarks(ctx, lm, {color:'#FFD600', lineWidth:1, radius:3});
+    }
+    const lm126 = extractLandmarks(results.multiHandLandmarks);
+    const [sign, conf] = detectSign(lm126);
+    predBuffer.push(sign && conf>=CONF_THRESHOLD ? [sign,conf] : [null,0]);
+    if (predBuffer.length > BUFFER_SIZE) predBuffer.shift();
+    const [s, c] = getStable();
+    updateUI(s, c);
+  } else {
+    statusDot.classList.remove('on');
+    statusText.textContent = 'No hand detected — show your hand';
+    predBuffer = [];
+    updateUI(null, 0);
+  }
+  ctx.restore();
+});
+
+async function startCamera() {
+  document.getElementById('loadingText').textContent = 'Requesting camera access...';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{width:540,height:405,facingMode:'user'} });
+    videoEl.srcObject = stream;
+    videoEl.onloadedmetadata = async () => {
+      document.getElementById('loadingText').textContent = 'Loading MediaPipe hand model...';
+      await hands.initialize();
+      handsReady = true;
+      document.getElementById('loadingOverlay').style.display = 'none';
+      statusText.textContent = 'Ready — show your hand!';
+      processFrames();
+    };
+  } catch(e) {
+    document.getElementById('loadingText').textContent = 'Camera error: '+e.message;
+  }
+}
+
+async function processFrames() {
+  if (!handsReady) return;
+  await hands.send({image: videoEl});
+  requestAnimationFrame(processFrames);
+}
+
+startCamera();
+</script>
+</body>
+</html>
